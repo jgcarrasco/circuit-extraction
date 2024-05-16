@@ -1,13 +1,35 @@
+from collections import defaultdict
+import time
+
 import torch
+import torch.nn.functional as F
 
 from transformer_lens import HookedTransformer
 
 from easy_transformer.ioi_dataset import IOIDataset
 
+TOKEN_TO_YEAR = {405: 0, 486: 1, 2999: 2, 3070: 3, 3023: 4, 2713: 5, 3312: 6, 2998: 7, 2919: 8, 2931: 9, 940: 10, 1157: 11, 1065: 12, 1485: 13, 1415: 14, 1314: 15, 1433: 16, 1558: 17, 1507: 18, 1129: 19, 1238: 20, 2481: 21, 1828: 22, 1954: 23, 1731: 24, 1495: 25, 2075: 26, 1983: 27, 2078: 28, 1959: 29, 1270: 30, 3132: 31, 2624: 32, 2091: 33, 2682: 34, 2327: 35, 2623: 36, 2718: 37, 2548: 38, 2670: 39, 1821: 40, 3901: 41, 3682: 42, 3559: 43, 2598: 44, 2231: 45, 3510: 46, 2857: 47, 2780: 48, 2920: 49, 1120: 50, 4349: 51, 4309: 52, 4310: 53, 4051: 54, 2816: 55, 3980: 56, 3553: 57, 3365: 58, 3270: 59, 1899: 60, 5333: 61, 5237: 62, 5066: 63, 2414: 64, 2996: 65, 2791: 66, 3134: 67, 3104: 68, 3388: 69, 2154: 70, 4869: 71, 4761: 72, 4790: 73, 4524: 74, 2425: 75, 4304: 76, 3324: 77, 3695: 78, 3720: 79, 1795: 80, 6659: 81, 6469: 82, 5999: 83, 5705: 84, 5332: 85, 4521: 86, 5774: 87, 3459: 88, 4531: 89, 3829: 90, 6420: 91, 5892: 92, 6052: 93, 5824: 94, 3865: 95, 4846: 96, 5607: 97, 4089: 98, 2079: 99}
+TOKEN_TO_YEAR = defaultdict(int, TOKEN_TO_YEAR)
 
-#########################
-#   SCORE FUNCTIONS     #
-#########################
+################################
+#   SCORE/METRIC FUNCTIONS     #
+################################
+
+def compute_accuracy(model, val_tokens, val_answer_tokens, task="acronyms"):
+    if task == "acronyms":
+        return (model(val_tokens)["logits"][:, -1].argmax(-1) == val_answer_tokens[:, -1]).float().mean().item()
+    if task == "ioi":
+        return (model(val_tokens)["logits"][:, -1].argmax(-1) == val_answer_tokens).float().mean().item()
+    if task == "greater-than":
+        preds = [TOKEN_TO_YEAR[t.item()] for t in model(val_tokens)["logits"][:, -1].argmax(-1)]
+        val_answer_str_tokens = [TOKEN_TO_YEAR[t.item()] for t in val_answer_tokens]
+        return sum([int(pred) > int(gt) for pred, gt in zip(preds, val_answer_str_tokens)]) / val_answer_tokens.shape[0]
+
+def kl_div(logits, baseline_logprobs):
+    # logits and baseline_logprobs have shape [batch_size, seq_len, d_vocab]
+    logits = logits[:, -1]
+    baseline_logprobs = baseline_logprobs[:, -1]
+    return F.kl_div(F.log_softmax(logits, dim=-1), baseline_logprobs, log_target=True, reduction="none").sum(dim=-1).mean()
 
 def compute_logit_diff_acronym(logits, answer_tokens, average=True, letter=3):
     """
@@ -33,6 +55,11 @@ def compute_logit_diff_acronym(logits, answer_tokens, average=True, letter=3):
     # Return the mean logit difference at the token position corresponding to the `letter`th letter
     logit_diff = (correct_logits - incorrect_logits)[..., -4 + letter].mean()
     return logit_diff.mean() if average else logit_diff
+
+
+##########################
+# LOADING DATA FUNCTIONS #
+##########################
 
 # the class and function to obtain the greater-than data is borrowed from the ACDC code 
 # (https://github.com/ArthurConmy/Automatic-Circuit-Discovery/blob/main/acdc/greaterthan/utils.py#L61)
@@ -141,6 +168,20 @@ def get_year_data(num_examples, model):
     return prompts_tokenized, prompts
 
 
+def load_gpt2_tl():
+    model = HookedTransformer.from_pretrained(
+    'gpt2-small',
+    center_writing_weights=False,
+    center_unembed=False,
+    fold_ln=False,
+    device="cuda" if torch.cuda.is_available() else "cpu",
+    )
+    model.set_use_hook_mlp_in(True)
+    model.set_use_split_qkv_input(True)
+    model.set_use_attn_result(True)
+    return model
+
+
 def get_data(n_patching=100, n_val=100, task="acronyms"):
     """
     Prepares the dataset and model that will be used to perform the experiments.
@@ -154,20 +195,11 @@ def get_data(n_patching=100, n_val=100, task="acronyms"):
     - `dict` with keys `model`, `
     """
 
+    assert task in ["acronyms", "ioi", "greater-than"], "task must be either of 'acronyms', 'ioi', 'greater-than'"
+
     data = {}
 
-    model = HookedTransformer.from_pretrained(
-    'gpt2-small',
-    center_writing_weights=False,
-    center_unembed=False,
-    fold_ln=False,
-    device="cuda" if torch.cuda.is_available() else "cpu",
-    )
-    model.set_use_hook_mlp_in(True)
-    model.set_use_split_qkv_input(True)
-    model.set_use_attn_result(True)
-
-    data["model"] = model
+    model = load_gpt2_tl()
 
     if task == "acronyms":
         with open("data/acronyms_2_common.txt", "r") as f:
@@ -210,11 +242,11 @@ def get_data(n_patching=100, n_val=100, task="acronyms"):
 
     if task == "greater-than":
         tokens, _ = get_year_data(n_patching+n_val, model)
-        patching_tokens = tokens[:n_patching, :-1]
-        patching_answer_tokens = tokens[:n_patching, -1]
+        patching_tokens = tokens[:n_patching]
+        patching_answer_tokens = tokens[:n_patching, -3]
 
-        val_tokens = tokens[n_patching:n_patching+n_val, :-1]
-        val_answer_tokens = tokens[n_patching:n_patching+n_val, -1]
+        val_tokens = tokens[n_patching:n_patching+n_val]
+        val_answer_tokens = tokens[n_patching:n_patching+n_val, -3]
 
         gt_circuit = [[5, 1], [5, 5], [6, 1], [6, 9], [7, 10], [8, 8], [8, 11], [9, 1]] # we're only including attention heads, omitting MLPs for now
 
@@ -232,4 +264,19 @@ def get_data(n_patching=100, n_val=100, task="acronyms"):
 
     data["gt_circuit"] = gt_circuit
 
+    del model
+
     return data
+
+
+def measure_time(model, val_tokens):
+    n_repeats = 5
+
+    ts = []
+    for _ in range(n_repeats):
+        ti = time.time()
+        model(val_tokens)
+        dt = time.time() - ti
+        ts.append(dt)
+    t = sum(ts)/5
+    return t
