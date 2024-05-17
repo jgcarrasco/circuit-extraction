@@ -84,4 +84,4 @@ def benchmark_experiment(threshold, val_logits, val_tokens, val_answer_tokens,
     acc = compute_accuracy(model, val_tokens, val_answer_tokens, task=task)
     n_params = model.num_parameters() - embedding_parameters
     time = measure_time(model, val_tokens)
-    return acc, (baseline_acc - acc), n_params, (baseline_size - n_params) / baseline_size, time, (baseline_time - time) / baseline_time
+    return acc, (acc - baseline_acc), n_params, (baseline_size - n_params) / baseline_size, time, (baseline_time - time) / baseline_time

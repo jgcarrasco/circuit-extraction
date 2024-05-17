@@ -255,11 +255,11 @@ def get_data(n_patching=100, n_val=100, task="acronyms"):
 
     data["patching_tokens"] = patching_tokens
     data["patching_answer_tokens"] = patching_answer_tokens
-    data["patching_logits"] = patching_logits
+    data["patching_logits"] = patching_logits.detach()
     data["patching_cache"] = patching_cache
     data["val_tokens"] = val_tokens
     data["val_answer_tokens"] = val_answer_tokens
-    data["val_logits"] = val_logits
+    data["val_logits"] = val_logits.detach()
     data["val_cache"] = val_cache
 
     data["gt_circuit"] = gt_circuit
