@@ -12,10 +12,16 @@ from utils import load_gpt2_tl, compute_accuracy, get_data, measure_time
 
 
 def hyperparameter_experiments(task):    
-    thresholds = 10**torch.linspace(-5, 0, 30)
-
-    n_patching = 250
-    n_val = 250
+    if task == "greater-than":
+        thresholds = 10**torch.linspace(-5, 1, 30)
+    else:
+        thresholds = 10**torch.linspace(-5, 0, 30)
+    if task == "ioi":
+        n_patching = 150
+        n_val = 150
+    else:
+        n_patching = 250
+        n_val = 250
 
     data = get_data(n_patching=n_patching, n_val=n_val, task=task)
 
